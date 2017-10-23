@@ -1,0 +1,205 @@
+---
+title: "STAT/MATH 495: Problem Set 06"
+author: "Albert Y. Kim and Andrew Kim"
+date: "2017-10-17"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    collapsed: false
+    smooth_scroll: false
+    df_print: kable
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE, fig.width=8, fig.height=4.5, message=FALSE, warning = FALSE
+  )
+set.seed(76)
+
+# Load packages
+library(tidyverse)
+library(broom)
+library(knitr)
+```
+
+
+
+
+
+# Collaboration
+
+Please indicate who you collaborated with on this assignment: 
+
+
+
+
+
+# Setup
+
+Define truth, which again we know for the purposes of this assignment, but in
+practice we won't:
+
+* the true function f(x) i.e. the signal
+* the true epsilon i.e. the noise, which in this case is Normal$(0, sd=\sigma)$.
+Hence the standard deviation $\sigma$ determines the amount of noise.
+
+```{r}
+f <- function(x) {
+  x^2
+}
+sigma <- 0.3
+```
+
+This is the target point we'll be trying to predict: $(0.95, f(0.95)) = (0.95, 0.95^2) = (0.95, 0.9025)$, Thus, the test set is just `x=0.95`
+
+```{r}
+x0 <- 0.95
+test_set <- data_frame(x=x0)
+```
+
+This function generates a random sample of size $n$; think of this as a "get new
+data" function. Random in terms of both:
+
+* (New) the predictor x (uniform on [0,1])
+* the amount of noise $\epsilon$
+
+```{r}
+generate_sample <- function(f, n, sigma) {
+  sample <- data_frame(
+    x = runif(n = n, min = 0, max = 1),
+    f_x = f(x),
+    epsilon = rnorm(n = n, mean = 0, sd = sigma),
+    y = f_x + epsilon
+  )
+  # Recall: We don't observe f(x) and epsilon, just (x, y)
+  sample <- sample %>% 
+    select(x, y)
+  
+  return(sample)
+}
+```
+
+Define
+
+* The number $n$ of observations $(x_i, y_i)$ in each sample. In the handout,
+$n=100$ to keep plots uncrowded. Here we boost to $n=500$
+* Number of samples of size $n$ to consider
+
+```{r}
+n <- 500
+n_samples <- 10000
+```
+
+
+# Computation
+
+```{r, cache=TRUE}
+# Save predictions here
+y_hat_lm <- rep(0, n_samples)
+y_hat_splines_99 <- rep(0, n_samples)
+
+for(i in 1:n_samples) {
+  # 1. Sample training data
+  train_set <- generate_sample(f, n, sigma)
+
+  # 2.a) Fit lm model
+  lm_model <- lm(y ~ x, data = train_set)
+  # 2.b) Make predictions
+  y_hat_lm[i] <- lm_model %>%
+    augment(newdata=test_set) %>%
+    pull(.fitted)
+
+  # 3.a) Fit splines model
+  splines_model <- smooth.spline(x=train_set$x, y=train_set$y, df=99) 
+  y_hat_splines_99[i] <- predict(splines_model, x=test_set$x) %>% 
+    as_tibble() %>% 
+    pull(y)
+}
+```
+
+```{r, cache=TRUE}
+# Generate truth: i.e. all components we really know, but pretend not to:
+truth <- data_frame(
+  x = rep(x0, n_samples),
+  f_x = f(x),
+  eps = rnorm(n = n_samples, mean = 0, sd = sigma),
+  y = f_x + eps
+)
+
+# Show bias^2/variance/irreducible error breakdown for lm:
+results1 <- truth %>%
+  mutate(y_hat = y_hat_lm) %>% 
+  summarise(
+    MSE = mean((y-y_hat)^2),
+    bias_squared = mean((f_x-y_hat))^2,
+    var = var(y_hat)
+  ) %>%
+  mutate(
+    irreducible = sigma^2,
+    sum = bias_squared + var + irreducible
+    ) %>% 
+  kable(digits = 4)
+
+# Show bias^2/variance/irreducible error breakdown for splines:
+results2 <- truth %>%
+  mutate(y_hat = y_hat_splines_99) %>% 
+  summarise(
+    MSE = mean((y-y_hat)^2),
+    bias_squared = mean((f_x-y_hat))^2,
+    var = var(y_hat)
+  ) %>%
+  mutate(
+    irreducible = sigma^2,
+    sum = bias_squared + var + irreducible
+  ) %>% 
+  kable(digits = 4)
+```
+
+# Tables
+
+As done in Lec 2.7, for both
+
+* An `lm` regression AKA a `smooth.splines(x, y, df=2)` model fit 
+* A `smooth.splines(x, y, df=99)` model fit 
+
+output tables comparing:
+
+|  MSE| bias_squared|   var| irreducible|   sum|
+|----:|------------:|-----:|-----------:|-----:|
+|     X|           X  |     X |      X |         X |
+
+where `sum = bias_squared + var + irreducible`. You can created cleanly formatted tables like the one above by piping a data frame into `knitr::kable(digits=4)`.
+
+
+### Output for linear regression model results:
+
+```{r, echo = FALSE}
+results1
+```
+
+
+### Output for spline model results:
+
+```{r, echo = FALSE}
+results2
+```
+
+
+# Analysis
+
+**Questions**:
+
+1. Based on the topics covered in Lec 2.7, name one possible "sanity check" for your results. Name another if you can.
+1. In **two** sentences or less, give a rough sketch of what the procedure would
+be to get the breakdown of $$\mbox{MSE}\left[\widehat{f}(x)\right]$$ for *all*
+$x$ in this example, and not just for $$\mbox{MSE}\left[\widehat{f}(x_0)\right]
+= \mbox{MSE}\left[\widehat{f}(0.95)\right]$$.
+1. Which of the two models would you choose for predicting the point of interest and why?
+
+**Answers**:
+
+1.
+2.
+3. Choose the spline model because it's has a better balance of bias and variance compared to linear regression. The linear regression model is much more biased compared to the spline model.
