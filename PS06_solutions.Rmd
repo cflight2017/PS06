@@ -5,10 +5,10 @@ date: "2017-10-17"
 output:
   html_document:
     toc: true
-    toc_float: true
+    toc_float: 
+      collapsed: false
+      smooth_scroll: false
     toc_depth: 2
-    collapsed: false
-    smooth_scroll: false
     df_print: kable
 ---
 
@@ -22,13 +22,14 @@ set.seed(76)
 library(tidyverse)
 library(broom)
 library(knitr)
+library(gridExtra)
 ```
 
 
 
 
 
-# Collaboration
+# Collaboration {-}
 
 Please indicate who you collaborated with on this assignment: 
 
@@ -42,7 +43,7 @@ Define truth, which again we know for the purposes of this assignment, but in
 practice we won't:
 
 * the true function f(x) i.e. the signal
-* the true epsilon i.e. the noise, which in this case is Normal$(0, sd=\sigma)$.
+* the true epsilon i.e. the noise, which in this case is Normal$(0, \mbox{sd} = \sigma)$.
 Hence the standard deviation $\sigma$ determines the amount of noise.
 
 ```{r}
@@ -95,42 +96,138 @@ n_samples <- 10000
 
 # Computation
 
+## Get fitted/predicted values $\widehat{f}(0.95)$
+
+First, let's 
+
+1. Generate a new training set of observations $(x_i, y_i)$ for $i=1, \ldots, n= 500$
+1. Based on the above training set, fit 
+    a) a spline model $\widehat{y} = \widehat{f}_{2}(x)$ using degrees of freedom $df=2$
+    a) a spline model $\widehat{y} = \widehat{f}_{99}(x)$ using degrees of freedom $df=99$
+1. Use these models to predict the value of $f(0.95) = 0.95^2$ by computing
+    a) $\widehat{y} = \widehat{f}_{2}(0.95)$
+    a) $\widehat{y} = \widehat{f}_{99}(0.95)$
+
+Repeat the above 10000 times
+
 ```{r, cache=TRUE}
-# Save predictions here
-y_hat_lm <- rep(0, n_samples)
-y_hat_splines_99 <- rep(0, n_samples)
+# Store predicted values here
+y_hat_df_2 <- rep(0, n_samples)
+y_hat_df_99 <- rep(0, n_samples)
 
 for(i in 1:n_samples) {
-  # 1. Sample training data
+  # 1. Sample a new instance of training data (x, y)
   train_set <- generate_sample(f, n, sigma)
 
-  # 2.a) Fit lm model
-  lm_model <- lm(y ~ x, data = train_set)
-  # 2.b) Make predictions
-  y_hat_lm[i] <- lm_model %>%
-    augment(newdata=test_set) %>%
-    pull(.fitted)
+  # 2.a) Fit df=2 model & predict on test set
+  df_2_model <- smooth.spline(x=train_set$x, y=train_set$y, df=2) 
+  y_hat_df_2[i] <- predict(df_2_model, x=test_set$x)$y
 
-  # 3.a) Fit splines model
-  splines_model <- smooth.spline(x=train_set$x, y=train_set$y, df=99) 
-  y_hat_splines_99[i] <- predict(splines_model, x=test_set$x) %>% 
-    as_tibble() %>% 
-    pull(y)
+  # 3.a) Fit df=99 model & predict on test set
+  df_99_model <- smooth.spline(x=train_set$x, y=train_set$y, df=99) 
+  y_hat_df_99[i] <- predict(df_99_model, x=test_set$x)$y
 }
 ```
 
-```{r, cache=TRUE}
-# Generate truth: i.e. all components we really know, but pretend not to:
-truth <- data_frame(
+Let's visualize
+
+* A histogram of the `r n_samples` $\widehat{f}_{2}(0.95)$
+* A histogram of the `r n_samples` $\widehat{f}_{99}(0.95)$
+* A red line indicating the true $f(0.95) = 0.95^2 = 0.9025$.
+
+```{r, echo=FALSE}
+y_hat_data_frame <- data_frame(
+  df = c(rep("df = 2", n_samples), rep("df = 99", n_samples)),
+  y_hat = c(y_hat_df_2, y_hat_df_99)
+)
+ggplot(y_hat_data_frame, aes(x=y_hat)) +
+  geom_histogram() +
+  facet_wrap(~df, nrow=1) +
+  geom_vline(xintercept=f(x0), col="red", size=1) +
+  labs(x="f_hat(0.95)", title="Figure 1: 10000 fitted/predicted values y_hat")
+```
+
+We observe just as from the [handout from Lec 2.7](https://rudeboybert.github.io/STAT495/static/generate_splines_bias_variance_handout/plots.pdf)
+that for
+
+* $df=2$ we have lower variance (AKA lower standard error) and higher bias
+* $df=99$ we have higher variance and lower bias (almost none in fact)
+
+
+## Creating $y$'s
+
+We now take our 10000 instances of $\widehat{f}_{2}(0.95)$ and
+$\widehat{f}_{99}(0.95)$ and evaluate the MSE. This necessitates 10000 values of
+$y$. What is $y$? One source of confusion *everyone* encounters when doing this
+exercise (even I did) was:
+
+* $\widehat{y} = \widehat{f}(x)$
+* $y \neq f(0.95)$. Rather $y = f(x) + \epsilon$
+
+Note that $y$'s incorporate *the unsystematic error term* $\epsilon$. In most
+real-life cases, we won't know the mechanism that generates these terms. In this
+exercise however, we do:
+
+$$
+\epsilon \sim \mbox{Normal}\left(0, \sigma = 0.3 \right)
+$$
+
+We can't use the `generate_sample()` function above as this generates
+observations $(x,y)$ for many different $x$'s. However, we only want $y$'s for
+$x=0.95$. So let's manually construct them! 
+
+```{r}
+# First the error component...
+epsilon <- rnorm(n = n_samples, mean = 0, sd = sigma)
+# Then the signal component...
+x <- rep(0.95, times = n_samples)
+f_x <- f(x)
+# Now put them together...
+y <- f_x + epsilon
+```
+
+Let's put all these vectors together into a single data frame!
+
+```{r}
+results <- data_frame(
   x = rep(x0, n_samples),
   f_x = f(x),
   eps = rnorm(n = n_samples, mean = 0, sd = sigma),
   y = f_x + eps
 )
+```
 
-# Show bias^2/variance/irreducible error breakdown for lm:
-results1 <- truth %>%
-  mutate(y_hat = y_hat_lm) %>% 
+```{r, echo=FALSE}
+plot1 <- ggplot(results, aes(x=eps)) +
+  geom_histogram() +
+  labs(x="epsilon", title="Figure 2: Error component epsilon") +
+  coord_cartesian(xlim=c(-1, 2))
+plot2 <- ggplot(results, aes(x=y)) +
+  geom_histogram() +
+  labs(x="epsilon", title="Figure 2: Observed y") +
+  geom_vline(xintercept=f(x0), col="red", size=1) +
+  coord_cartesian(xlim=c(-1, 2))
+grid.arrange(plot1, plot2, nrow=1)
+```
+
+
+## Evaluate MSE and breakdown
+
+Let's now tack on our fitted values:
+
+```{r}
+results <- results %>% 
+  mutate(
+    y_hat_df_2 = y_hat_df_2,
+    y_hat_df_99 = y_hat_df_99
+  )
+```
+
+Let's show bias^2/variance/irreducible error breakdown for $df=2$
+
+```{r}
+results %>%
+  mutate(y_hat = y_hat_df_2) %>% 
   summarise(
     MSE = mean((y-y_hat)^2),
     bias_squared = mean((f_x-y_hat))^2,
@@ -141,10 +238,13 @@ results1 <- truth %>%
     sum = bias_squared + var + irreducible
     ) %>% 
   kable(digits = 4)
+```
 
-# Show bias^2/variance/irreducible error breakdown for splines:
-results2 <- truth %>%
-  mutate(y_hat = y_hat_splines_99) %>% 
+Let's show bias^2/variance/irreducible error breakdown for $df=99$
+
+```{r}
+results %>%
+  mutate(y_hat = y_hat_df_99) %>% 
   summarise(
     MSE = mean((y-y_hat)^2),
     bias_squared = mean((f_x-y_hat))^2,
@@ -157,34 +257,6 @@ results2 <- truth %>%
   kable(digits = 4)
 ```
 
-# Tables
-
-As done in Lec 2.7, for both
-
-* An `lm` regression AKA a `smooth.splines(x, y, df=2)` model fit 
-* A `smooth.splines(x, y, df=99)` model fit 
-
-output tables comparing:
-
-|  MSE| bias_squared|   var| irreducible|   sum|
-|----:|------------:|-----:|-----------:|-----:|
-|     X|           X  |     X |      X |         X |
-
-where `sum = bias_squared + var + irreducible`. You can created cleanly formatted tables like the one above by piping a data frame into `knitr::kable(digits=4)`.
-
-
-### Output for linear regression model results:
-
-```{r, echo = FALSE}
-results1
-```
-
-
-### Output for spline model results:
-
-```{r, echo = FALSE}
-results2
-```
 
 
 # Analysis
@@ -200,6 +272,4 @@ $x$ in this example, and not just for $$\mbox{MSE}\left[\widehat{f}(x_0)\right]
 
 **Answers**:
 
-1.
-2.
-3. Choose the spline model because it's has a better balance of bias and variance compared to linear regression. The linear regression model is much more biased compared to the spline model.
+Chalk talk 2.8 on Thu 11/2.
